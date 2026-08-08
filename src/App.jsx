@@ -1161,6 +1161,7 @@ function AppContent({ session }) {
             transactions={transactions}
             categories={categories}
             goals={goals}
+            onNavigate={goToTab}
           />
         )}
 

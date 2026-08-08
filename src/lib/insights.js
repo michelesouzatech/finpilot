@@ -12,18 +12,18 @@ function monthKey(offset = 0) {
   return `${y}-${m}`
 }
 
-function monthTransactions(transactions, key) {
+export function monthTransactions(transactions, key) {
   return transactions.filter((t) => t.date?.slice(0, 7) === key)
 }
 
-function sumByType(transactions, type) {
+export function sumByType(transactions, type) {
   return transactions
     .filter((t) => t.type === type)
     .reduce((sum, t) => sum + (Number(t.amount) || 0), 0)
 }
 
 // Agrupa os gastos (saídas) do mês por categoria, do maior pro menor.
-function spendingByCategory(transactions, categories, key) {
+export function spendingByCategory(transactions, categories, key) {
   const monthTx = monthTransactions(transactions, key).filter((t) => t.type === 'saida')
   const totals = new Map()
 

@@ -25,3 +25,6 @@ dist-ssr
 *.sw?
 
 .vercel
+
+# Estado local do CLI do Supabase (qual projeto está linkado nesta máquina)
+supabase/.temp
