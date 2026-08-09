@@ -1,5 +1,7 @@
-import { todayIso } from './constants'
+import { todayIso, categoryMeta } from './constants'
 import { computeSaved } from './goals'
+import { buildOccurrencesForMonth } from './bills'
+import { currentPeriodKey, invoicePeriod, invoiceItems, invoiceTotal } from './invoices'
 
 // Data local (não UTC) — ver o comentário em constants.js/todayIso sobre por
 // que `toISOString()` sozinho causa bug de fuso horário perto da meia-noite.
@@ -86,6 +88,93 @@ export function computeMonthSummary(accounts, transactions) {
     income,
     expense,
   }
+}
+
+// Fatias do gráfico de pizza "Contas do mês": uma por conta a pagar que cai
+// no mês atual — pagas e a pagar juntas, porque a pergunta que o gráfico
+// responde é "no que o meu mês vai", não "o que ainda falta quitar". Conta
+// paga entra pelo valor efetivamente pago; as demais, pelo valor cadastrado.
+//
+// As faturas de cartão entram como uma fatia só (a conta "Fatura X" gerada
+// automaticamente quando a fatura fecha) — o detalhe do que foi comprado é
+// justamente o outro gráfico, `cardSpendingBreakdown`.
+export function monthBillsBreakdown(bills, billPayments, categories = []) {
+  const monthKey = currentMonthKey()
+  const occurrences = buildOccurrencesForMonth(bills ?? [], billPayments ?? [], monthKey).filter(
+    (o) => (o.bill.type ?? 'saida') === 'saida',
+  )
+
+  const slices = occurrences
+    .map((o) => {
+      const value = Number(o.paid ? o.payment.amount : o.bill.amount) || 0
+      const category = categoryMeta(categories, o.bill.category)
+      return {
+        id: o.key,
+        label: o.installmentTotal
+          ? `${o.bill.name} (${o.installmentIndex}/${o.installmentTotal})`
+          : o.bill.name,
+        emoji: o.bill.cardId ? '💳' : (category?.emoji ?? '🧾'),
+        value,
+        paid: o.paid,
+      }
+    })
+    .filter((slice) => slice.value > 0)
+    .sort((a, b) => b.value - a.value)
+
+  return {
+    slices,
+    total: slices.reduce((sum, s) => sum + s.value, 0),
+    paidTotal: slices.filter((s) => s.paid).reduce((sum, s) => sum + s.value, 0),
+    monthKey,
+  }
+}
+
+// Fatura em aberto de cada cartão, no momento em que ela está — não espera
+// fechar, igual ao "Faturas em aberto" de Lançamentos.
+function openInvoicePeriods(accounts) {
+  return (accounts ?? [])
+    .filter((a) => a.type === 'cartao')
+    .map((card) => ({ card, period: invoicePeriod(card, currentPeriodKey(card)) }))
+}
+
+// Fatias do gráfico "Gastos no cartão", agrupadas por categoria e somando
+// todos os cartões. Estorno (entrada lançada no cartão) fica de fora: ele
+// abate o total da fatura, mas não é gasto de categoria nenhuma — por isso
+// esse total pode ficar um pouco acima do de `cardTotalsBreakdown`.
+export function cardSpendingBreakdown(accounts, transactions, subscriptions = [], categories = []) {
+  const totals = new Map()
+
+  for (const { card, period } of openInvoicePeriods(accounts)) {
+    for (const item of invoiceItems(transactions, card.id, period, subscriptions)) {
+      if (item.type !== 'saida') continue
+      const category = categoryMeta(categories, item.category)
+      const id = category?.id ?? 'sem-categoria'
+      const current = totals.get(id) ?? {
+        id,
+        label: category?.label ?? 'Sem categoria',
+        emoji: category?.emoji ?? '🗂️',
+        value: 0,
+      }
+      current.value += Number(item.amount) || 0
+      totals.set(id, current)
+    }
+  }
+
+  return [...totals.values()].filter((s) => s.value > 0).sort((a, b) => b.value - a.value)
+}
+
+// A mesma fatura em aberto, mas fatiada por cartão — a leitura que interessa
+// pra quem tem mais de um.
+export function cardTotalsBreakdown(accounts, transactions, subscriptions = []) {
+  return openInvoicePeriods(accounts)
+    .map(({ card, period }) => ({
+      id: card.id,
+      label: card.name,
+      emoji: '💳',
+      value: invoiceTotal(transactions, card.id, period, subscriptions),
+    }))
+    .filter((s) => s.value > 0)
+    .sort((a, b) => b.value - a.value)
 }
 
 // Projeta o saldo dos próximos `days` dias, repetindo mensalmente as

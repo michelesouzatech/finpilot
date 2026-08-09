@@ -1,10 +1,19 @@
 import { useEffect, useRef, useState } from 'react'
 import { Card, DangerLink, Field, TextInput, Select, PrimaryButton, GhostButton } from './ui.jsx'
 import { UserIcon, BankIcon, ListIcon, CatIcon, PencilIcon, UploadIcon } from './icons.jsx'
+import Insights from './Insights.jsx'
 import { supabase } from '../lib/supabaseClient.js'
 import { loadProfile, saveProfile, uploadAvatar, deleteAccountForever } from '../lib/storage.js'
 
-function ProfileScreen({ accounts, transactions, goals, onNavigate, userEmail, userId }) {
+function ProfileScreen({
+  accounts,
+  transactions,
+  categories,
+  goals,
+  onNavigate,
+  userEmail,
+  userId,
+}) {
   const totalContas = accounts.length
   const totalLancamentos = transactions.length
   const totalGatinhos = goals.length
@@ -210,6 +219,17 @@ function ProfileScreen({ accounts, transactions, goals, onNavigate, userEmail, u
           <span className="text-xs text-gray">Gatinhos</span>
         </button>
       </Card>
+
+      {/* Os insights moram aqui, e não numa aba própria: eles falam sobre a
+          pessoa (o mês dela, os hábitos, as metas), então ficam junto do
+          resto do "sobre você" em vez de disputarem espaço no menu. */}
+      <Insights
+        accounts={accounts}
+        transactions={transactions}
+        categories={categories}
+        goals={goals}
+        onNavigate={onNavigate}
+      />
 
       <Card className="flex flex-col gap-1">
         <p className="font-display text-sm font-semibold text-ink">Sobre o FinPilot</p>

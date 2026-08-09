@@ -16,7 +16,9 @@ function MoreMenu({ items, activeTab, onSelect, onClose }) {
             <CloseIcon />
           </button>
         </div>
-        <div className="grid grid-cols-3 gap-3">
+        {/* Com 4 itens, três colunas deixariam um sozinho na segunda linha —
+            2x2 fecha o quadro. */}
+        <div className={`grid gap-3 ${items.length === 4 ? 'grid-cols-2' : 'grid-cols-3'}`}>
           {items.map(({ id, label, icon: Icon }) => {
             const active = activeTab === id
             return (

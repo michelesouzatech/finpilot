@@ -1,8 +1,9 @@
 import { useMemo, useRef, useState } from 'react'
 import { Card, EmptyState } from './ui'
 import NotificationItem from './NotificationItem'
+import PieChart from './PieChart'
 import { ArrowUpIcon, ArrowDownIcon, WalletIcon } from './icons'
-import { formatMoney, formatDate } from '../lib/constants'
+import { formatMoney, formatDate, monthLabel } from '../lib/constants'
 import {
   computeMonthSummary,
   computeProjection,
@@ -10,6 +11,9 @@ import {
   computeInvestedAmount,
   computeGoalsReserved,
   computePocketsReserved,
+  monthBillsBreakdown,
+  cardSpendingBreakdown,
+  cardTotalsBreakdown,
 } from '../lib/dashboard'
 
 function ProjectionChart({ points }) {
@@ -143,11 +147,37 @@ function availabilityNote({ reserved, invested }) {
   return `${formatMoney(apart)} em investimentos, gatinhos e saldo separado não entram nesse valor.`
 }
 
+// Os dois gráficos de pizza dividem o mesmo cartão: título, o gráfico (ou o
+// aviso de que ainda não há o que fatiar) e uma linha de rodapé com o total.
+function BreakdownCard({ title, subtitle, slices, centerLabel, empty, footer, toolbar }) {
+  return (
+    <Card className="flex flex-col gap-3">
+      <div>
+        <h2 className="font-display text-lg font-semibold text-ink">{title}</h2>
+        <p className="text-xs text-gray">{subtitle}</p>
+      </div>
+      {toolbar}
+      {slices.length === 0 ? (
+        <p className="rounded-2xl bg-ink/5 px-4 py-3 text-sm text-gray">{empty}</p>
+      ) : (
+        <>
+          <PieChart slices={slices} centerLabel={centerLabel} />
+          {footer && <p className="text-xs text-gray">{footer}</p>}
+        </>
+      )}
+    </Card>
+  )
+}
+
 function Dashboard({
   accounts,
   transactions,
   goals,
   pockets,
+  bills = [],
+  billPayments = [],
+  categories = [],
+  subscriptions = [],
   notifications = [],
   onNotificationClick,
 }) {
@@ -166,6 +196,26 @@ function Dashboard({
     [goals, pockets],
   )
   const note = availabilityNote({ reserved, invested })
+
+  const monthBills = useMemo(
+    () => monthBillsBreakdown(bills, billPayments, categories),
+    [bills, billPayments, categories],
+  )
+  const cardsByCategory = useMemo(
+    () => cardSpendingBreakdown(accounts, transactions, subscriptions, categories),
+    [accounts, transactions, subscriptions, categories],
+  )
+  const cardsByCard = useMemo(
+    () => cardTotalsBreakdown(accounts, transactions, subscriptions),
+    [accounts, transactions, subscriptions],
+  )
+  // Com um cartão só, fatiar por cartão daria uma fatia de 100% — a escolha
+  // só aparece pra quem tem mais de um.
+  const [cardView, setCardView] = useState('categoria')
+  const hasCards = accounts.some((a) => a.type === 'cartao')
+  const hasManyCards = cardsByCard.length > 1
+  const cardSlices = hasManyCards && cardView === 'cartao' ? cardsByCard : cardsByCategory
+  const cardsTotal = cardsByCard.reduce((sum, s) => sum + s.value, 0)
 
   if (accounts.length === 0) {
     return (
@@ -218,6 +268,55 @@ function Dashboard({
           <span className="text-xs text-gray">Este mês</span>
         </Card>
       </div>
+
+      <BreakdownCard
+        title="Contas do mês"
+        subtitle={`Quanto cada conta pesa no total a pagar de ${monthLabel(monthBills.monthKey)}`}
+        slices={monthBills.slices}
+        centerLabel="Total do mês"
+        empty="Cadastre suas contas a pagar na aba Lançamentos pra ver aqui o peso de cada uma no mês."
+        footer={`${formatMoney(monthBills.paidTotal)} já pago de ${formatMoney(monthBills.total)}.`}
+      />
+
+      {/* Sem cartão cadastrado esse gráfico não tem o que dizer — nem em
+          branco: some da tela até existir um cartão. */}
+      {hasCards && (
+        <BreakdownCard
+          title="Gastos no cartão"
+          subtitle={
+            hasManyCards && cardView === 'cartao'
+              ? 'Fatura em aberto de cada cartão'
+              : 'Categorias das compras nas faturas em aberto'
+          }
+          slices={cardSlices}
+          centerLabel={hasManyCards && cardView === 'cartao' ? 'Faturas abertas' : 'Total gasto'}
+          empty="Nenhuma compra nas faturas em aberto ainda. Lance uma compra na aba Cartões."
+          footer={`${formatMoney(cardsTotal)} nas faturas que ainda não fecharam.`}
+          toolbar={
+            hasManyCards && (
+              <div className="flex gap-1 rounded-full bg-ink/5 p-1">
+                {[
+                  { id: 'categoria', label: 'Por categoria' },
+                  { id: 'cartao', label: 'Por cartão' },
+                ].map((view) => (
+                  <button
+                    key={view.id}
+                    type="button"
+                    onClick={() => setCardView(view.id)}
+                    className={`flex-1 rounded-full px-3 py-1.5 text-xs font-medium transition active:scale-[0.98] ${
+                      cardView === view.id
+                        ? 'bg-surface text-ink shadow-sm'
+                        : 'text-gray hover:text-ink'
+                    }`}
+                  >
+                    {view.label}
+                  </button>
+                ))}
+              </div>
+            )
+          }
+        />
+      )}
 
       <Card className="flex flex-col gap-3">
         <div>

@@ -11,7 +11,6 @@ import GoalList from './components/GoalList.jsx'
 import PocketForm from './components/PocketForm.jsx'
 import PocketList from './components/PocketList.jsx'
 import SimuladorScreen from './components/SimuladorScreen.jsx'
-import Insights from './components/Insights.jsx'
 import BillForm from './components/BillForm.jsx'
 import BillList from './components/BillList.jsx'
 import OpenInvoicesSummary from './components/OpenInvoicesSummary.jsx'
@@ -29,7 +28,6 @@ import {
   InboxIcon,
   CatIcon,
   QuestionIcon,
-  SparkleIcon,
   CardIcon,
   BellIcon,
   MenuIcon,
@@ -132,25 +130,18 @@ const TABS = [
     subtitle: 'Simule o impacto de uma compra antes de decidir',
   },
   {
-    id: 'insights',
-    label: 'Insights',
-    icon: SparkleIcon,
-    mascot: CatMascotSparkle,
-    subtitle: 'O que Finny percebeu nos seus dados',
-  },
-  {
     id: 'perfil',
     label: 'Perfil',
     icon: UserIcon,
-    mascot: CatMascotPeek,
-    subtitle: 'Seus dados no FinPilot',
+    mascot: CatMascotSparkle,
+    subtitle: 'Seus dados e o que Finny percebeu neles',
   },
 ]
 
 // Só essas 4 aparecem fixas na barra inferior — o resto (+ Perfil) mora no
 // menu de "mais funcionalidades", aberto pelas três barrinhas à direita.
 const MAIN_TAB_IDS = ['contas', 'lancamentos', 'dashboard', 'cartoes']
-const MORE_TAB_IDS = ['caixa', 'porquinhos', 'simulador', 'insights', 'perfil']
+const MORE_TAB_IDS = ['caixa', 'porquinhos', 'simulador', 'perfil']
 
 function App() {
   const [session, setSession] = useState(undefined)
@@ -881,10 +872,12 @@ function AppContent({ session }) {
           <Dashboard
             accounts={accounts}
             transactions={transactions}
+            categories={categories}
             goals={goals}
             pockets={pockets}
             bills={bills}
             billPayments={billPayments}
+            subscriptions={cardSubscriptions}
             notifications={notifications}
             onNotificationClick={handleNotificationClick}
           />
@@ -1155,20 +1148,11 @@ function AppContent({ session }) {
           />
         )}
 
-        {tab === 'insights' && (
-          <Insights
-            accounts={accounts}
-            transactions={transactions}
-            categories={categories}
-            goals={goals}
-            onNavigate={goToTab}
-          />
-        )}
-
         {tab === 'perfil' && (
           <ProfileScreen
             accounts={accounts}
             transactions={transactions}
+            categories={categories}
             goals={goals}
             onNavigate={goToTab}
             userEmail={session.user.email}
