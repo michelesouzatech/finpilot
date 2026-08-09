@@ -678,8 +678,6 @@ function AppContent({ session }) {
     )
   }
 
-  // Clicar numa notificação leva direto pro card da conta em Lançamentos,
-  // já destacado, pra pessoa registrar o pagamento/recebimento na hora.
   function handleClearNotifications() {
     setDismissedNotifications(
       (prev) => new Set([...prev, ...bellNotifications.map((n) => n.id)]),
@@ -687,12 +685,20 @@ function AppContent({ session }) {
     setShowNotifications(false)
   }
 
-  function handleNotificationClick(notification) {
+  // Leva direto pro card da conta em Lançamentos, já destacado, pra pessoa
+  // registrar o pagamento/recebimento na hora. A chave é `billId:monthKey` —
+  // vem do sininho (a ocorrência clicada) ou do aviso resumido do Dashboard
+  // (a ocorrência mais urgente do grupo).
+  function focusBill(occurrenceKey) {
     setTab('lancamentos')
     setShowBillForm(false)
     setShowTxForm(false)
-    setHighlightBillKey(notification.id)
+    setHighlightBillKey(occurrenceKey)
     setShowNotifications(false)
+  }
+
+  function handleNotificationClick(notification) {
+    focusBill(notification.id)
   }
 
   // Clicar num cartão em "Faturas em aberto" (Lançamentos) leva direto pra
@@ -878,8 +884,7 @@ function AppContent({ session }) {
             bills={bills}
             billPayments={billPayments}
             subscriptions={cardSubscriptions}
-            notifications={notifications}
-            onNotificationClick={handleNotificationClick}
+            onFocusBill={focusBill}
           />
         )}
 

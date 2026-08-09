@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { Card, EmptyState } from './ui'
-import NotificationItem from './NotificationItem'
 import PieChart from './PieChart'
+import { summarizeAlerts } from '../lib/notifications'
 import { ArrowUpIcon, ArrowDownIcon, WalletIcon } from './icons'
 import { formatMoney, formatDate, monthLabel } from '../lib/constants'
 import {
@@ -147,6 +147,48 @@ function availabilityNote({ reserved, invested }) {
   return `${formatMoney(apart)} em investimentos, gatinhos e saldo separado não entram nesse valor.`
 }
 
+// Cor por natureza do aviso: a pagar em rosa (mais forte quando já atrasou),
+// a receber em coral — a mesma convenção dos cards do sininho.
+const alertClasses = {
+  atrasadas: 'bg-rose/20 hover:bg-rose/25',
+  'a-vencer': 'bg-rose/10 hover:bg-rose/15',
+  'a-receber': 'bg-coral/10 hover:bg-coral/20',
+}
+
+// Um aviso resumido por grupo (atrasadas / a vencer / a receber). O clique
+// abre a ocorrência mais urgente do grupo em Lançamentos, que é onde se marca
+// como paga ou recebida.
+function AlertSummary({ alert, onFocusBill }) {
+  const amount =
+    alert.total > 0
+      ? `${formatMoney(alert.total)}${alert.hasUnknown ? '+' : ''}`
+      : alert.hasUnknown
+        ? 'A definir'
+        : formatMoney(0)
+
+  return (
+    <button
+      type="button"
+      onClick={() => onFocusBill?.(alert.focusKey)}
+      className={`flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left transition active:scale-[0.99] ${
+        alertClasses[alert.id] ?? alertClasses['a-vencer']
+      }`}
+    >
+      <span className="text-base leading-none">{alert.emoji}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-xs font-semibold leading-snug text-ink">{alert.title}</span>
+        <span className="block text-[0.7rem] leading-snug text-gray">{alert.detail}</span>
+      </span>
+      <span className="shrink-0 text-right">
+        <span className="block font-display text-xs font-semibold text-ink">{amount}</span>
+        <span className="block text-[0.65rem] font-medium text-coral underline underline-offset-2">
+          {alert.actionLabel}
+        </span>
+      </span>
+    </button>
+  )
+}
+
 // Os dois gráficos de pizza dividem o mesmo cartão: título, o gráfico (ou o
 // aviso de que ainda não há o que fatiar) e uma linha de rodapé com o total.
 function BreakdownCard({ title, subtitle, slices, centerLabel, empty, footer, toolbar }) {
@@ -178,8 +220,7 @@ function Dashboard({
   billPayments = [],
   categories = [],
   subscriptions = [],
-  notifications = [],
-  onNotificationClick,
+  onFocusBill,
 }) {
   const summary = useMemo(() => computeMonthSummary(accounts, transactions), [accounts, transactions])
   const projection = useMemo(() => computeProjection(accounts, transactions, 30), [accounts, transactions])
@@ -196,6 +237,11 @@ function Dashboard({
     [goals, pockets],
   )
   const note = availabilityNote({ reserved, invested })
+
+  // Calculado aqui, e não recebido pronto do App: o Dashboard mostra as
+  // pendências independentemente do que já foi "limpado" no sininho — limpar
+  // esconde o aviso de lá, não resolve a conta.
+  const alerts = useMemo(() => summarizeAlerts(bills, billPayments), [bills, billPayments])
 
   const monthBills = useMemo(
     () => monthBillsBreakdown(bills, billPayments, categories),
@@ -244,10 +290,10 @@ function Dashboard({
         </span>
       </Card>
 
-      {notifications.length > 0 && (
+      {alerts.length > 0 && (
         <div className="flex flex-col gap-1.5">
-          {notifications.map((n) => (
-            <NotificationItem key={n.id} notification={n} onClick={onNotificationClick} />
+          {alerts.map((alert) => (
+            <AlertSummary key={alert.id} alert={alert} onFocusBill={onFocusBill} />
           ))}
         </div>
       )}

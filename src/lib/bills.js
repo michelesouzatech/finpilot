@@ -1,6 +1,9 @@
 import { todayIso, formatMoney } from './constants'
 
-const DUE_SOON_DAYS = 2
+// Janela de "vence em breve", usada tanto pelo aviso resumido do Dashboard
+// quanto pelo sininho e pelos badges de cada conta — um número só pra as três
+// telas nunca discordarem sobre o que já é urgente.
+const DUE_SOON_DAYS = 3
 
 // Mesma lógica de comparação de datas locais (YYYY-MM-DD) usada em goals.js —
 // ancorada em UTC só pra subtração de dias, sem o fuso horário local interferir.
@@ -78,13 +81,17 @@ function occurrenceStatus(dueDate, paid, today) {
 export function buildOccurrences(bills, payments, today = todayIso()) {
   const thisMonth = currentMonthKey()
   const prevMonth = monthKeyOffset(thisMonth, -1)
+  // O mês seguinte entra por causa da janela de "vence em breve": no dia 30,
+  // uma conta recorrente do dia 1º já está a dois dias de vencer, e sem essa
+  // linha ela só apareceria depois de virar o mês — quando já era.
+  const nextMonth = monthKeyOffset(thisMonth, 1)
   const occurrences = []
 
   for (const bill of bills) {
     if (bill.active === false) continue
 
     if (bill.recurring) {
-      const months = [prevMonth, thisMonth]
+      const months = [prevMonth, thisMonth, nextMonth]
       for (const monthKey of months) {
         if (beforeStart(bill, monthKey)) continue
         // Recorrência "encerrada" (ex: Paula não divide mais a Netflix) para
