@@ -37,7 +37,7 @@ import {
 } from './components/icons.jsx'
 import { DEFAULT_CATEGORIES, todayIso, roundMoney } from './lib/constants.js'
 import { upgradeCategoryEmojis } from './lib/emoji.js'
-import { monthKeyOffset, currentMonthKey, findPayment } from './lib/bills.js'
+import { monthKeyOffset, currentMonthKey, findPayments } from './lib/bills.js'
 import { buildNotifications } from './lib/notifications.js'
 import {
   registerServiceWorker,
@@ -680,16 +680,29 @@ function AppContent({ session }) {
   }
 
   // Pagar uma conta cria, ao mesmo tempo, o registro de pagamento (pra saber
-  // que aquele mês/ocorrência já foi quitado) e um lançamento normal de saída
-  // na conta escolhida — assim o saldo da conta corrente debita sozinho,
-  // reaproveitando o mesmo cálculo de saldo das transações comuns.
-  function handlePayBill(occurrence, { amount, accountId, paidDate }) {
+  // quanto já foi quitado daquele mês/ocorrência) e um lançamento normal de
+  // saída na conta escolhida — assim o saldo da conta corrente debita
+  // sozinho, reaproveitando o mesmo cálculo de saldo das transações comuns.
+  // `amount` pode ser menor que o valor devido (pagamento parcial: o
+  // restante fica pendente pra um pagamento futuro) e `discount` é só um
+  // abatimento no valor da conta — não é dinheiro que circula, então não vira
+  // lançamento.
+  function handlePayBill(occurrence, { amount, accountId, paidDate, discount = 0 }) {
     const paymentId = generateId()
     const txId = generateId()
     const { bill, monthKey } = occurrence
     setBillPayments([
       ...billPayments,
-      { id: paymentId, billId: bill.id, monthKey, amount, paidDate, accountId, transactionId: txId },
+      {
+        id: paymentId,
+        billId: bill.id,
+        monthKey,
+        amount,
+        discount: discount || undefined,
+        paidDate,
+        accountId,
+        transactionId: txId,
+      },
     ])
     setTransactions([
       ...transactions,
@@ -798,8 +811,8 @@ function AppContent({ session }) {
         )
 
         if (existing) {
-          const paid = findPayment(billPayments, existing.id, existing.dueDate?.slice(0, 7))
-          if (!paid && roundMoney(existing.amount) !== total) {
+          const hasPayment = findPayments(billPayments, existing.id, existing.dueDate?.slice(0, 7)).length > 0
+          if (!hasPayment && roundMoney(existing.amount) !== total) {
             correctedAmounts.set(existing.id, total)
           }
           continue

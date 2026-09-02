@@ -1,4 +1,4 @@
-import { todayIso, formatMoney } from './constants'
+import { todayIso, formatMoney, roundMoney } from './constants'
 
 // Janela de "vence em breve", usada tanto pelo aviso resumido do Dashboard
 // quanto pelo sininho e pelos badges de cada conta — um número só pra as três
@@ -55,8 +55,32 @@ export function occurrenceDueDate(bill, monthKey) {
   return `${monthKey}-${String(day).padStart(2, '0')}`
 }
 
-export function findPayment(payments, billId, monthKey) {
-  return payments.find((p) => p.billId === billId && p.monthKey === monthKey) ?? null
+// Uma ocorrência pode ter mais de um pagamento quando é quitada aos poucos
+// (ex: fatura de R$100 paga em duas vezes, R$30 e depois R$70) — por isso
+// retorna a lista inteira, não só o primeiro encontrado.
+export function findPayments(payments, billId, monthKey) {
+  return payments.filter((p) => p.billId === billId && p.monthKey === monthKey)
+}
+
+// Soma do que já foi efetivamente pago numa ocorrência, somando todos os
+// pagamentos parciais registrados pra ela.
+export function paymentsPaidAmount(payments) {
+  return roundMoney(payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0))
+}
+
+// Soma dos descontos aplicados nos pagamentos dessa ocorrência (ex: desconto
+// por pagar antes do vencimento) — abate do valor da conta, não é dinheiro
+// que circula, então não entra no lançamento nem no saldo da conta.
+export function paymentsDiscountAmount(payments) {
+  return roundMoney(payments.reduce((sum, p) => sum + (Number(p.discount) || 0), 0))
+}
+
+// Valor que a conta realmente cobra depois do desconto acumulado. `null`
+// quando a conta não tem valor definido (valor variável sem estimativa) —
+// nesse caso não dá pra calcular "quanto falta", só dar baixa no valor cheio.
+export function occurrenceAmountDue(bill, discount) {
+  if (bill.amount == null) return null
+  return roundMoney(Math.max(0, Number(bill.amount) - discount))
 }
 
 // Conta recorrente só existe a partir do mês do primeiro vencimento
@@ -67,11 +91,46 @@ function beforeStart(bill, monthKey) {
   return Boolean(bill.startMonthKey) && monthKey < bill.startMonthKey
 }
 
-function occurrenceStatus(dueDate, paid, today) {
-  if (paid) return 'paga'
+// `partial` só entra em jogo quando a ocorrência não está vencida nem
+// vencendo em breve — nesses dois casos a urgência do prazo é o que mais
+// importa mostrar; o quanto já foi pago aparece à parte (`occurrence.partial`)
+// sem tomar o lugar do status de prazo.
+function occurrenceStatus(dueDate, fullyPaid, partial, today) {
+  if (fullyPaid) return 'paga'
   if (dueDate < today) return 'vencida'
   if (daysBetween(today, dueDate) <= DUE_SOON_DAYS) return 'vence-em-breve'
+  if (partial) return 'parcial'
   return 'a-vencer'
+}
+
+// Campos comuns de uma ocorrência (recorrente, parcelada ou pontual), a
+// partir dos pagamentos já registrados pra ela — usado nos quatro lugares que
+// montam ocorrência (`buildOccurrences` e `occurrenceForBillAtMonth`, cada um
+// nos três formatos de conta) pra a lógica de pagamento parcial/desconto não
+// precisar ser repetida em cada um.
+function buildOccurrenceFields(bill, monthKey, dueDate, payments, today) {
+  const discount = paymentsDiscountAmount(payments)
+  const paidAmount = paymentsPaidAmount(payments)
+  const amountDue = occurrenceAmountDue(bill, discount)
+  const fullyPaid = amountDue == null ? payments.length > 0 : paidAmount >= amountDue - 0.005
+  const partial = !fullyPaid && paidAmount > 0
+  const remaining = amountDue == null ? null : roundMoney(Math.max(0, amountDue - paidAmount))
+
+  return {
+    key: `${bill.id}:${monthKey}`,
+    bill,
+    monthKey,
+    dueDate,
+    payments,
+    payment: payments[payments.length - 1] ?? null,
+    paidAmount,
+    discount,
+    amountDue,
+    remaining,
+    paid: fullyPaid,
+    partial,
+    status: occurrenceStatus(dueDate, fullyPaid, partial, today),
+  }
 }
 
 // Gera a lista de ocorrências (uma por conta/mês) a exibir na tela: contas
@@ -98,18 +157,11 @@ export function buildOccurrences(bills, payments, today = todayIso()) {
         // de gerar ocorrência a partir do mês seguinte ao encerramento — os
         // meses anteriores, já vencidos ou pagos, continuam valendo.
         if (bill.recurringEndMonthKey && monthKey > bill.recurringEndMonthKey) continue
-        const payment = findPayment(payments, bill.id, monthKey)
         const dueDate = occurrenceDueDate(bill, monthKey)
-        if (monthKey === prevMonth && payment) continue // mês passado já pago não precisa aparecer
-        occurrences.push({
-          key: `${bill.id}:${monthKey}`,
-          bill,
-          monthKey,
-          dueDate,
-          payment,
-          paid: Boolean(payment),
-          status: occurrenceStatus(dueDate, Boolean(payment), today),
-        })
+        const occPayments = findPayments(payments, bill.id, monthKey)
+        const fields = buildOccurrenceFields(bill, monthKey, dueDate, occPayments, today)
+        if (monthKey === prevMonth && fields.paid) continue // mês passado já quitado não precisa aparecer
+        occurrences.push(fields)
       }
     } else if (bill.installments > 1) {
       // Conta parcelada: uma ocorrência por parcela, a partir da data
@@ -120,42 +172,27 @@ export function buildOccurrences(bills, payments, today = todayIso()) {
       for (let i = 0; i < bill.installments; i += 1) {
         const monthKey = addMonths(bill.dueDate, i).slice(0, 7)
         const dueDate = addMonths(bill.dueDate, i)
-        const payment = findPayment(payments, bill.id, monthKey)
-        const paid = Boolean(payment)
-        const status = occurrenceStatus(dueDate, paid, today)
+        const occPayments = findPayments(payments, bill.id, monthKey)
+        const fields = buildOccurrenceFields(bill, monthKey, dueDate, occPayments, today)
 
-        const isFutureUnpaid = !paid && dueDate > today
+        const isFutureUnpaid = !fields.paid && dueDate > today
         if (isFutureUnpaid) {
           if (nextUpcomingShown) continue // só a próxima parcela futura entra na lista
           nextUpcomingShown = true
-        } else if (paid && monthKey !== thisMonth && monthKey !== prevMonth) {
-          continue // parcela paga há mais de 1 mês não precisa mais aparecer
+        } else if (fields.paid && monthKey !== thisMonth && monthKey !== prevMonth) {
+          continue // parcela quitada há mais de 1 mês não precisa mais aparecer
         }
 
         occurrences.push({
-          key: `${bill.id}:${monthKey}`,
-          bill,
-          monthKey,
-          dueDate,
-          payment,
-          paid,
-          status,
+          ...fields,
           installmentIndex: i + 1,
           installmentTotal: bill.installments,
         })
       }
     } else {
       const monthKey = bill.dueDate?.slice(0, 7) ?? thisMonth
-      const payment = findPayment(payments, bill.id, monthKey)
-      occurrences.push({
-        key: `${bill.id}:${monthKey}`,
-        bill,
-        monthKey,
-        dueDate: bill.dueDate,
-        payment,
-        paid: Boolean(payment),
-        status: occurrenceStatus(bill.dueDate, Boolean(payment), today),
-      })
+      const occPayments = findPayments(payments, bill.id, monthKey)
+      occurrences.push(buildOccurrenceFields(bill, monthKey, bill.dueDate, occPayments, today))
     }
   }
 
@@ -175,17 +212,9 @@ function occurrenceForBillAtMonth(bill, payments, monthKey, today) {
   if (bill.recurring) {
     if (beforeStart(bill, monthKey)) return null
     if (bill.recurringEndMonthKey && monthKey > bill.recurringEndMonthKey) return null
-    const payment = findPayment(payments, bill.id, monthKey)
     const dueDate = occurrenceDueDate(bill, monthKey)
-    return {
-      key: `${bill.id}:${monthKey}`,
-      bill,
-      monthKey,
-      dueDate,
-      payment,
-      paid: Boolean(payment),
-      status: occurrenceStatus(dueDate, Boolean(payment), today),
-    }
+    const occPayments = findPayments(payments, bill.id, monthKey)
+    return buildOccurrenceFields(bill, monthKey, dueDate, occPayments, today)
   }
 
   if (bill.installments > 1) {
@@ -194,16 +223,9 @@ function occurrenceForBillAtMonth(bill, payments, monthKey, today) {
     const index = monthKeyDiff(billMonthKey, monthKey)
     if (index < 0 || index >= bill.installments) return null
     const dueDate = addMonths(bill.dueDate, index)
-    const payment = findPayment(payments, bill.id, monthKey)
-    const paid = Boolean(payment)
+    const occPayments = findPayments(payments, bill.id, monthKey)
     return {
-      key: `${bill.id}:${monthKey}`,
-      bill,
-      monthKey,
-      dueDate,
-      payment,
-      paid,
-      status: occurrenceStatus(dueDate, paid, today),
+      ...buildOccurrenceFields(bill, monthKey, dueDate, occPayments, today),
       installmentIndex: index + 1,
       installmentTotal: bill.installments,
     }
@@ -211,16 +233,8 @@ function occurrenceForBillAtMonth(bill, payments, monthKey, today) {
 
   const billMonthKey = bill.dueDate?.slice(0, 7)
   if (billMonthKey !== monthKey) return null
-  const payment = findPayment(payments, bill.id, monthKey)
-  return {
-    key: `${bill.id}:${monthKey}`,
-    bill,
-    monthKey,
-    dueDate: bill.dueDate,
-    payment,
-    paid: Boolean(payment),
-    status: occurrenceStatus(bill.dueDate, Boolean(payment), today),
-  }
+  const occPayments = findPayments(payments, bill.id, monthKey)
+  return buildOccurrenceFields(bill, monthKey, bill.dueDate, occPayments, today)
 }
 
 // Todas as ocorrências (a pagar e a receber, recorrentes, parceladas ou
@@ -241,13 +255,14 @@ function summaryForType(occurrences, type) {
   const dueSoon = typeOccurrences.filter((o) => o.status === 'vence-em-breve')
   const monthOnes = typeOccurrences.filter((o) => o.monthKey === thisMonth)
 
-  const overdueTotal = overdue.reduce((sum, o) => sum + (Number(o.bill.amount) || 0), 0)
-  const dueSoonTotal = dueSoon.reduce((sum, o) => sum + (Number(o.bill.amount) || 0), 0)
-  const paidTotal = monthOnes
-    .filter((o) => o.paid)
-    .reduce((sum, o) => sum + (Number(o.payment.amount) || 0), 0)
+  // `remaining`/`amountDue` já descontam o que foi pago e o desconto aplicado
+  // — uma conta vencida com pagamento parcial entra pelo que ainda falta, não
+  // pelo valor cheio original.
+  const overdueTotal = overdue.reduce((sum, o) => sum + (o.remaining ?? 0), 0)
+  const dueSoonTotal = dueSoon.reduce((sum, o) => sum + (o.remaining ?? 0), 0)
+  const paidTotal = monthOnes.reduce((sum, o) => sum + o.paidAmount, 0)
   const expectedTotal = monthOnes.reduce(
-    (sum, o) => sum + (o.paid ? Number(o.payment.amount) || 0 : Number(o.bill.amount) || 0),
+    (sum, o) => sum + (o.paid ? o.paidAmount : (o.amountDue ?? 0)),
     0,
   )
 

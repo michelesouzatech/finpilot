@@ -1,4 +1,5 @@
 import { todayIso, categoryMeta, monthLabel } from './constants'
+import { paymentsPaidAmount, paymentsDiscountAmount } from './bills'
 
 function pad2(n) {
   return String(n).padStart(2, '0')
@@ -277,10 +278,17 @@ export function cardAvailableLimit(
   const openPeriodKey = currentPeriodKey(card)
   const openPeriod = invoicePeriod(card, openPeriodKey)
   const openTotal = invoiceTotal(transactions, card.id, openPeriod, subscriptions)
+  // Fatura paga parcialmente só devolve o limite do que já foi quitado — o
+  // restante continua comprometido até o pagamento completar.
   const unpaidPastInvoices = bills
     .filter((b) => b.cardId === card.id)
-    .filter((b) => !billPayments.some((p) => p.billId === b.id))
-    .reduce((sum, b) => sum + (Number(b.amount) || 0), 0)
+    .reduce((sum, b) => {
+      const pays = billPayments.filter((p) => p.billId === b.id)
+      const discount = paymentsDiscountAmount(pays)
+      const amountDue = Math.max(0, (Number(b.amount) || 0) - discount)
+      const paid = paymentsPaidAmount(pays)
+      return sum + Math.max(0, amountDue - paid)
+    }, 0)
   const committedAhead = (transactions ?? [])
     .filter((t) => t.accountId === card.id && t.periodKey && t.periodKey > openPeriodKey)
     .reduce((sum, t) => sum + signedInvoiceAmount(t), 0)

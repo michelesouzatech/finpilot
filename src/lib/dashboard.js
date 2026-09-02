@@ -110,7 +110,10 @@ export function monthBillsBreakdown(bills, billPayments, categories = []) {
 
   const slices = occurrences
     .map((o) => {
-      const value = Number(o.paid ? o.payment.amount : o.bill.amount) || 0
+      // Paga (mesmo que em mais de um pagamento) entra pelo total efetivamente
+      // pago; parcial ou em aberto entra pelo que ainda é devido (já descontado
+      // o desconto e o que já foi pago).
+      const value = o.paid ? o.paidAmount : (o.amountDue ?? 0)
       const category = categoryMeta(categories, o.bill.category)
       return {
         id: o.key,

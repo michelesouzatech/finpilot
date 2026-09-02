@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { formatMoney, formatDate, monthLabel, categoryMeta, todayIso } from '../lib/constants'
+import { formatMoney, formatDate, monthLabel, categoryMeta, todayIso, roundMoney } from '../lib/constants'
 import {
   billsSummaryInsight,
   buildOccurrences,
@@ -7,7 +7,7 @@ import {
   currentMonthKey,
   monthKeyOffset,
 } from '../lib/bills'
-import { Card, EmptyState, TextInput, Select, PrimaryButton, GhostButton } from './ui'
+import { Card, EmptyState, Field, TextInput, Select, PrimaryButton, GhostButton } from './ui'
 import InsightNote from './InsightNote'
 import SwipeToDelete from './SwipeToDelete'
 import {
@@ -27,6 +27,11 @@ const STATUS_META = {
   vencida: { label: 'Vencida', className: 'bg-rose/20 text-rose' },
   'vence-em-breve': { label: 'Vence em breve', className: 'bg-rose/10 text-rose' },
   'a-vencer': { label: 'A vencer', className: 'bg-ink/5 text-gray' },
+  parcial: { label: 'Pago parcialmente', className: 'bg-coral/15 text-coral' },
+}
+
+function partialLabel(isEntrada) {
+  return isEntrada ? 'Recebido parcialmente' : 'Pago parcialmente'
 }
 
 // Recebido (entrada) e pago (saída) usam cores diferentes de propósito — a
@@ -39,22 +44,34 @@ function paidMeta(isEntrada) {
 }
 
 function PayForm({ occurrence, onConfirm, onCancel }) {
-  const { bill } = occurrence
+  const { bill, remaining, paidAmount } = occurrence
   const isEntrada = bill.type === 'entrada'
   const payableAccounts = occurrence.accounts.filter((a) => a.type !== 'cartao')
-  const [amount, setAmount] = useState(bill.amount ?? '')
+  // Conta marcada como "valor variável" e cadastrada sem estimativa (ex:
+  // roupas do brechó, que só dá pra somar no dia): o valor nasce em branco e
+  // o formulário existe justamente pra ele ser informado antes da baixa. Sem
+  // valor definido não dá pra calcular "quanto falta", então não tem como
+  // pagar parcial nem aplicar desconto — só dar baixa no valor informado.
+  const undefinedAmount = bill.amount == null
+  const suggestedAmount = remaining ?? bill.amount
+  const [amount, setAmount] = useState(suggestedAmount == null ? '' : String(suggestedAmount))
+  const [discount, setDiscount] = useState('')
   const [accountId, setAccountId] = useState(bill.accountId)
   const [paidDate, setPaidDate] = useState(todayIso())
 
-  // Conta marcada como "valor variável" e cadastrada sem estimativa (ex:
-  // roupas do brechó, que só dá pra somar no dia): o valor nasce em branco e
-  // o formulário existe justamente pra ele ser informado antes da baixa.
-  const undefinedAmount = bill.amount == null
+  const discountValue = Number(discount) || 0
+  const amountValue = Number(amount) || 0
+  // Quanto ainda fica devendo depois desse pagamento, já considerando o
+  // desconto informado agora — pagar menos que isso não é erro, é justamente
+  // o pagamento parcial: o restante fica pendente pra uma próxima baixa.
+  const dueAfterDiscount =
+    remaining != null ? roundMoney(Math.max(0, remaining - discountValue)) : null
+  const leftover = dueAfterDiscount != null ? roundMoney(dueAfterDiscount - amountValue) : null
 
   function handleSubmit(e) {
     e.preventDefault()
     if (amount === '' || !accountId) return
-    onConfirm({ amount: Number(amount), accountId, paidDate })
+    onConfirm({ amount: amountValue, accountId, paidDate, discount: discountValue })
   }
 
   return (
@@ -63,11 +80,18 @@ function PayForm({ occurrence, onConfirm, onCancel }) {
         <p className="font-display text-sm font-semibold text-ink">
           Quanto você {isEntrada ? 'recebeu' : 'pagou'}?
         </p>
-        {undefinedAmount && (
+        {undefinedAmount ? (
           <p className="text-xs text-gray">
             Essa conta foi cadastrada sem valor definido — informe o valor real pra dar baixa e
             atualizar o saldo.
           </p>
+        ) : (
+          paidAmount > 0 && (
+            <p className="text-xs text-gray">
+              Já {isEntrada ? 'recebido' : 'pago'}: {formatMoney(paidAmount)} · Falta{' '}
+              {formatMoney(remaining)}
+            </p>
+          )
         )}
       </div>
       <div className="grid grid-cols-2 gap-2">
@@ -88,6 +112,28 @@ function PayForm({ occurrence, onConfirm, onCancel }) {
           required
         />
       </div>
+      {!undefinedAmount && (
+        <Field label="Desconto (opcional)">
+          <TextInput
+            type="number"
+            step="0.01"
+            inputMode="decimal"
+            value={discount}
+            onChange={(e) => setDiscount(e.target.value)}
+            placeholder="Ex: por pagar antes do vencimento"
+          />
+          {discountValue > 0 && (
+            <span className="text-xs text-gray">
+              Valor devido com desconto: {formatMoney(dueAfterDiscount)}
+            </span>
+          )}
+        </Field>
+      )}
+      {leftover != null && leftover > 0.005 && (
+        <p className="text-xs font-medium text-coral">
+          Vai ficar faltando {formatMoney(leftover)} — dá pra quitar depois.
+        </p>
+      )}
       <Select value={accountId} onChange={(e) => setAccountId(e.target.value)} required>
         {payableAccounts.map((a) => (
           <option key={a.id} value={a.id}>
@@ -120,7 +166,21 @@ function BillCard({
   highlighted,
 }) {
   const [paying, setPaying] = useState(false)
-  const { bill, dueDate, status, paid, payment, installmentIndex, installmentTotal } = occurrence
+  const {
+    bill,
+    dueDate,
+    status,
+    paid,
+    payment,
+    payments,
+    paidAmount,
+    amountDue,
+    remaining,
+    discount,
+    partial,
+    installmentIndex,
+    installmentTotal,
+  } = occurrence
   const recurrenceEnded = bill.recurring && Boolean(bill.recurringEndMonthKey)
   const account = accounts.find((a) => a.id === bill.accountId)
   const category = categoryMeta(categories, bill.category)
@@ -134,7 +194,9 @@ function BillCard({
       ? paidMeta(isEntrada)
       : status === 'vencida' && isEntrada
         ? { label: 'Não recebida', className: STATUS_META.vencida.className }
-        : STATUS_META[status]
+        : status === 'parcial'
+          ? { label: partialLabel(isEntrada), className: STATUS_META.parcial.className }
+          : STATUS_META[status]
 
   const cardRef = useRef(null)
   useEffect(() => {
@@ -226,13 +288,29 @@ function BillCard({
         ) : (
           <span className={`font-display font-semibold ${isEntrada ? 'text-mint' : 'text-ink'}`}>
             {isEntrada ? '+ ' : '- '}
-            {formatMoney(paid ? payment.amount : bill.amount)}
+            {formatMoney(paid ? paidAmount : (amountDue ?? bill.amount))}
             {!paid && bill.variableAmount && (
               <span className="ml-1 text-xs font-normal text-gray">(estimado)</span>
+            )}
+            {discount > 0 && (
+              <span className="ml-1 text-xs font-normal text-mint">
+                (desconto {formatMoney(discount)})
+              </span>
             )}
           </span>
         )}
       </div>
+
+      {/* Vencida/vence-em-breve tem prioridade sobre "parcial" no status (ver
+          occurrenceStatus em lib/bills.js), então uma conta atrasada com
+          pagamento parcial não mostra o selo "parcial" — esse aviso cobre
+          esse caso, mostrando o quanto já foi pago mesmo assim. */}
+      {partial && status !== 'parcial' && (
+        <p className="text-xs text-gray">
+          Já {isEntrada ? 'recebido' : 'pago'}: {formatMoney(paidAmount)} · Falta{' '}
+          {formatMoney(remaining)}
+        </p>
+      )}
 
       {bill.recurring && (
         <div className="flex items-center justify-between gap-2 text-xs">
@@ -268,20 +346,44 @@ function BillCard({
       )}
 
       {paid ? (
-        <div className="flex items-center justify-between gap-2">
-          {/* Mint nos dois casos: aqui a cor comunica "resolvida", não
-              entrada/saída — essa distinção já está no sinal e na cor do valor. */}
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-mint/15 px-3 py-1.5 font-display text-sm font-semibold text-mint">
-            <CheckIcon /> {isEntrada ? 'Recebida' : 'Paga'} em {formatDate(payment.paidDate)}
-          </span>
-          <GhostButton
-            type="button"
-            onClick={() => onUnpay(payment)}
-            className="px-3 py-1.5 text-xs"
-          >
-            Desfazer
-          </GhostButton>
-        </div>
+        payments.length > 1 ? (
+          // Quitada em mais de um pagamento: cada um some/some sozinho ao ser
+          // desfeito, em vez de um "Desfazer" só que apagaria tudo de uma vez.
+          <div className="flex flex-col gap-1.5">
+            {payments.map((p) => (
+              <div
+                key={p.id}
+                className="flex items-center justify-between gap-2 rounded-xl bg-mint/10 px-3 py-1.5"
+              >
+                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-mint">
+                  <CheckIcon /> {formatMoney(p.amount)} em {formatDate(p.paidDate)}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onUnpay(p)}
+                  className="text-xs font-medium text-gray hover:text-rose"
+                >
+                  Desfazer
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="flex items-center justify-between gap-2">
+            {/* Mint nos dois casos: aqui a cor comunica "resolvida", não
+                entrada/saída — essa distinção já está no sinal e na cor do valor. */}
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-mint/15 px-3 py-1.5 font-display text-sm font-semibold text-mint">
+              <CheckIcon /> {isEntrada ? 'Recebida' : 'Paga'} em {formatDate(payment.paidDate)}
+            </span>
+            <GhostButton
+              type="button"
+              onClick={() => onUnpay(payment)}
+              className="px-3 py-1.5 text-xs"
+            >
+              Desfazer
+            </GhostButton>
+          </div>
+        )
       ) : paying ? (
         <PayForm
           occurrence={{ ...occurrence, accounts }}
@@ -292,12 +394,34 @@ function BillCard({
           onCancel={() => setPaying(false)}
         />
       ) : (
-        <PrimaryButton type="button" onClick={() => setPaying(true)}>
-          <CheckIcon />{' '}
-          {undefinedAmount
-            ? `Informar valor ${isEntrada ? 'recebido' : 'pago'}`
-            : `Marcar como ${isEntrada ? 'recebida' : 'paga'}`}
-        </PrimaryButton>
+        <div className="flex flex-col gap-2">
+          {partial &&
+            payments.map((p) => (
+              <div
+                key={p.id}
+                className="flex items-center justify-between gap-2 rounded-xl bg-coral/10 px-3 py-1.5"
+              >
+                <span className="text-xs font-medium text-coral">
+                  {formatMoney(p.amount)} em {formatDate(p.paidDate)}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onUnpay(p)}
+                  className="text-xs font-medium text-gray hover:text-rose"
+                >
+                  Desfazer
+                </button>
+              </div>
+            ))}
+          <PrimaryButton type="button" onClick={() => setPaying(true)}>
+            <CheckIcon />{' '}
+            {undefinedAmount
+              ? `Informar valor ${isEntrada ? 'recebido' : 'pago'}`
+              : partial
+                ? `Pagar restante (${formatMoney(remaining)})`
+                : `Marcar como ${isEntrada ? 'recebida' : 'paga'}`}
+          </PrimaryButton>
+        </div>
       )}
     </Card>
     </SwipeToDelete>
