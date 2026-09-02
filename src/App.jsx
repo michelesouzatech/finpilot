@@ -3,6 +3,7 @@ import { CatMascotPeek, CatMascotGlasses, CatMascotSpending, CatMascotSparkle } 
 import AccountForm from './components/AccountForm.jsx'
 import AccountList from './components/AccountList.jsx'
 import TransactionForm from './components/TransactionForm.jsx'
+import TransferForm from './components/TransferForm.jsx'
 import CardsScreen from './components/CardsScreen.jsx'
 import Dashboard from './components/Dashboard.jsx'
 import Inbox from './components/Inbox.jsx'
@@ -32,6 +33,7 @@ import {
   BellIcon,
   MenuIcon,
   UserIcon,
+  SwapIcon,
 } from './components/icons.jsx'
 import { DEFAULT_CATEGORIES, todayIso, roundMoney } from './lib/constants.js'
 import { upgradeCategoryEmojis } from './lib/emoji.js'
@@ -280,6 +282,7 @@ function AppContent({ session }) {
   const [editingBill, setEditingBill] = useState(null)
   const [showAccountForm, setShowAccountForm] = useState(false)
   const [showTxForm, setShowTxForm] = useState(false)
+  const [showTransferForm, setShowTransferForm] = useState(false)
   const [showGoalForm, setShowGoalForm] = useState(false)
   const [showPocketForm, setShowPocketForm] = useState(false)
   const [showBillForm, setShowBillForm] = useState(false)
@@ -362,10 +365,10 @@ function AppContent({ session }) {
   // deixa o topo do form (nome, título) escondido acima da área visível —
   // parece que o campo sumiu, mas só está fora da rolagem.
   useEffect(() => {
-    if (showAccountForm || showTxForm || showGoalForm || showPocketForm || showBillForm) {
+    if (showAccountForm || showTxForm || showTransferForm || showGoalForm || showPocketForm || showBillForm) {
       mainRef.current?.scrollTo({ top: 0 })
     }
-  }, [showAccountForm, showTxForm, showGoalForm, showPocketForm, showBillForm])
+  }, [showAccountForm, showTxForm, showTransferForm, showGoalForm, showPocketForm, showBillForm])
 
   // O destaque vindo de uma notificação some sozinho depois de um tempo,
   // pra não ficar marcado pra sempre depois que a pessoa já viu o card.
@@ -395,8 +398,15 @@ function AppContent({ session }) {
   function handleDeleteAccount(id) {
     if (!confirm('Apagar essa conta? Os lançamentos e faturas ligados a ela também serão apagados.')) return
     const billIdsToRemove = new Set(bills.filter((b) => b.cardId === id).map((b) => b.id))
+    // Uma transferência envolvendo essa conta perde o sentido inteira, não só
+    // a perna que estava aqui — senão a outra perna fica órfã, sem par.
+    const transferIdsToRemove = new Set(
+      transactions.filter((t) => t.accountId === id && t.transferId).map((t) => t.transferId),
+    )
     setAccounts(accounts.filter((a) => a.id !== id))
-    setTransactions(transactions.filter((t) => t.accountId !== id))
+    setTransactions(
+      transactions.filter((t) => t.accountId !== id && !transferIdsToRemove.has(t.transferId)),
+    )
     setCardSubscriptions(cardSubscriptions.filter((s) => s.cardId !== id))
     if (billIdsToRemove.size > 0) {
       setBills(bills.filter((b) => !billIdsToRemove.has(b.id)))
@@ -434,8 +444,49 @@ function AppContent({ session }) {
   }
 
   function handleDeleteTx(id) {
-    if (!confirm('Apagar esse lançamento?')) return
-    setTransactions(transactions.filter((t) => t.id !== id))
+    const tx = transactions.find((t) => t.id === id)
+    if (!confirm(tx?.transferId ? 'Apagar essa transferência?' : 'Apagar esse lançamento?')) return
+    setTransactions(
+      tx?.transferId
+        ? transactions.filter((t) => t.transferId !== tx.transferId)
+        : transactions.filter((t) => t.id !== id),
+    )
+  }
+
+  // Transferência entre contas próprias = duas pernas espelhadas (saída na
+  // origem, entrada no destino), ligadas por transferId — pra apagar ou
+  // identificar uma transferência sempre mexer nas duas juntas, nunca só
+  // numa perna solta.
+  function handleSaveTransfer({ fromAccountId, toAccountId, amount, date, description }) {
+    const transferId = generateId()
+    const fromAccount = accounts.find((a) => a.id === fromAccountId)
+    const toAccount = accounts.find((a) => a.id === toAccountId)
+    const note = description || null
+
+    setTransactions([
+      ...transactions,
+      {
+        id: generateId(),
+        description: note ?? `Transferência para ${toAccount?.name ?? 'outra conta'}`,
+        amount,
+        type: 'saida',
+        date,
+        accountId: fromAccountId,
+        recurring: false,
+        transferId,
+      },
+      {
+        id: generateId(),
+        description: note ?? `Transferência de ${fromAccount?.name ?? 'outra conta'}`,
+        amount,
+        type: 'entrada',
+        date,
+        accountId: toAccountId,
+        recurring: false,
+        transferId,
+      },
+    ])
+    setShowTransferForm(false)
   }
 
   // Compra no cartão, nos três formatos que existem na vida real:
@@ -792,6 +843,12 @@ function AppContent({ session }) {
     () => transactions.filter((t) => !cardAccountIds.has(t.accountId)),
     [transactions, cardAccountIds],
   )
+  // Transferência é entre contas de "saldo" (corrente/investimento) — cartão
+  // segue seu próprio fluxo de compra/pagamento de fatura.
+  const transferableAccounts = useMemo(
+    () => accounts.filter((a) => a.type !== 'cartao'),
+    [accounts],
+  )
 
   const activeTab = TABS.find((t) => t.id === tab) ?? TABS[0]
   const Mascot = activeTab.mascot
@@ -945,7 +1002,7 @@ function AppContent({ session }) {
 
         {tab === 'lancamentos' && (
           <>
-            {!showTxForm && !showBillForm && accounts.length > 0 && (
+            {!showTxForm && !showTransferForm && !showBillForm && accounts.length > 0 && (
               <div className="flex gap-3">
                 <PrimaryButton
                   className="flex-1"
@@ -968,6 +1025,12 @@ function AppContent({ session }) {
               </div>
             )}
 
+            {!showTxForm && !showTransferForm && !showBillForm && transferableAccounts.length >= 2 && (
+              <GhostButton onClick={() => setShowTransferForm(true)}>
+                <SwapIcon /> Transferir entre contas
+              </GhostButton>
+            )}
+
             {accounts.length === 0 && !showTxForm && !showBillForm && (
               <p className="rounded-2xl bg-rose/10 px-4 py-3 text-sm text-ink">
                 Cadastre uma conta ou cartão primeiro, na aba <strong>Contas</strong>.
@@ -988,6 +1051,14 @@ function AppContent({ session }) {
               />
             )}
 
+            {showTransferForm && (
+              <TransferForm
+                accounts={transferableAccounts}
+                onSave={handleSaveTransfer}
+                onCancel={() => setShowTransferForm(false)}
+              />
+            )}
+
             {showBillForm && (
               <BillForm
                 accounts={accounts}
@@ -1002,7 +1073,7 @@ function AppContent({ session }) {
               />
             )}
 
-            {!showTxForm && !showBillForm && (
+            {!showTxForm && !showTransferForm && !showBillForm && (
               <OpenInvoicesSummary
                 accounts={accounts}
                 transactions={transactions}

@@ -290,6 +290,17 @@ export function DollarIcon(props) {
   )
 }
 
+export function SwapIcon(props) {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" {...base} strokeWidth={2} {...props}>
+      <path d="M4 8h13" />
+      <path d="M13 4l4 4-4 4" />
+      <path d="M20 16H7" />
+      <path d="M11 12l-4 4 4 4" />
+    </svg>
+  )
+}
+
 export function RepeatIcon(props) {
   return (
     <svg viewBox="0 0 24 24" width="14" height="14" {...base} strokeWidth={2} {...props}>

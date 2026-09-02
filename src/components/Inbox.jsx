@@ -215,7 +215,13 @@ function CategoryGroup({
   )
 }
 
-function Inbox({ transactions, accounts, categories, onAssignCategory, onAddCategory }) {
+function Inbox({ transactions: allTransactions, accounts, categories, onAssignCategory, onAddCategory }) {
+  // Transferência entre contas próprias não precisa de categoria — não é
+  // gasto nem receita, então nem entra na revisão.
+  const transactions = useMemo(
+    () => allTransactions.filter((t) => !t.transferId),
+    [allTransactions],
+  )
   const [filter, setFilter] = useState('todas')
   const [period, setPeriod] = useState('all')
   const [openGroupId, setOpenGroupId] = useState(null)

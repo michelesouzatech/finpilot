@@ -16,9 +16,11 @@ export function monthTransactions(transactions, key) {
   return transactions.filter((t) => t.date?.slice(0, 7) === key)
 }
 
+// Transferência entre contas próprias não conta como entrada/saída de
+// verdade — senão moveria o ponteiro de receita e despesa do mês à toa.
 export function sumByType(transactions, type) {
   return transactions
-    .filter((t) => t.type === type)
+    .filter((t) => t.type === type && !t.transferId)
     .reduce((sum, t) => sum + (Number(t.amount) || 0), 0)
 }
 
@@ -180,7 +182,7 @@ export function recurringCommitmentInsight(transactions) {
 // Quantos lançamentos do mês ainda estão sem categoria. Vive na Caixa de
 // entrada, incentivando a categorizar o que falta.
 export function uncategorizedInsight(transactions) {
-  const monthTx = monthTransactions(transactions, monthKey(0))
+  const monthTx = monthTransactions(transactions, monthKey(0)).filter((t) => !t.transferId)
   if (monthTx.length === 0) return null
 
   const uncategorized = monthTx.filter((t) => !t.category).length

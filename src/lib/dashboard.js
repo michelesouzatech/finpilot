@@ -75,7 +75,11 @@ export function computeAvailableBalance(accounts, transactions, goals, pockets) 
 
 export function computeMonthSummary(accounts, transactions) {
   const monthKey = currentMonthKey()
-  const monthTx = transactions.filter((t) => t.date?.slice(0, 7) === monthKey)
+  // Transferência entre contas próprias não é receita nem despesa de
+  // verdade — contá-la infla entrada e saída do mês por engano.
+  const monthTx = transactions.filter(
+    (t) => t.date?.slice(0, 7) === monthKey && !t.transferId,
+  )
   const income = monthTx
     .filter((t) => t.type === 'entrada')
     .reduce((sum, t) => sum + (Number(t.amount) || 0), 0)

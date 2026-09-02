@@ -20,6 +20,7 @@ import {
   ArrowUpIcon,
   ArrowDownIcon,
   ChevronDownIcon,
+  SwapIcon,
 } from './icons'
 
 const STATUS_META = {
@@ -332,6 +333,11 @@ function TransactionCard({ tx, accounts, categories, onEdit, onDelete }) {
                 <RepeatIcon /> recorrente
               </span>
             )}
+            {tx.transferId && (
+              <span className="inline-flex items-center gap-0.5 rounded-full bg-ink/5 px-1.5 py-0.5">
+                <SwapIcon /> transferência
+              </span>
+            )}
             {category && (
               <span className="inline-flex items-center gap-0.5 rounded-full bg-coral/15 px-1.5 py-0.5 text-coral">
                 {category.emoji} {category.label}
@@ -346,14 +352,16 @@ function TransactionCard({ tx, accounts, categories, onEdit, onDelete }) {
           {formatMoney(tx.amount)}
         </span>
         <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={() => onEdit(tx)}
-            className="rounded-full p-2 text-gray hover:bg-ink/5 hover:text-ink"
-            aria-label={`Editar ${tx.description}`}
-          >
-            <PencilIcon />
-          </button>
+          {!tx.transferId && (
+            <button
+              type="button"
+              onClick={() => onEdit(tx)}
+              className="rounded-full p-2 text-gray hover:bg-ink/5 hover:text-ink"
+              aria-label={`Editar ${tx.description}`}
+            >
+              <PencilIcon />
+            </button>
+          )}
           <button
             type="button"
             onClick={() => onDelete(tx.id)}
