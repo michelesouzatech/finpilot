@@ -10,6 +10,7 @@ import {
   cardSpendingByCategory,
   cardAvailableLimit,
   currentPeriodKey,
+  subscriptionActiveIn,
 } from '../lib/invoices'
 import { Card, Select, GhostButton, PrimaryButton, EmptyState } from './ui'
 import CardPurchaseForm from './CardPurchaseForm'
@@ -89,10 +90,13 @@ function CardInfoSummary({ card, transactions, bills, billPayments, subscription
 
 // Assinaturas são regras, não lançamentos — então ganham uma lista própria,
 // separada da fatura, pra poder interromper/reativar sem caçar a cobrança de
-// cada mês.
-function SubscriptionsCard({ card, subscriptions, categories, onStop, onResume }) {
-  const openPeriodKey = currentPeriodKey(card)
-  const cardSubs = subscriptions.filter((s) => s.cardId === card.id)
+// cada mês. A lista acompanha a fatura que está sendo vista: uma assinatura
+// interrompida em outubro some da listagem a partir da fatura de novembro,
+// em vez de continuar aparecendo pra sempre.
+function SubscriptionsCard({ card, subscriptions, categories, periodKey, onStop, onResume }) {
+  const cardSubs = subscriptions.filter(
+    (s) => s.cardId === card.id && subscriptionActiveIn(s, periodKey),
+  )
   if (cardSubs.length === 0) return null
 
   return (
@@ -100,7 +104,7 @@ function SubscriptionsCard({ card, subscriptions, categories, onStop, onResume }
       <h3 className="font-display text-sm font-semibold text-ink">Assinaturas nesse cartão</h3>
       {cardSubs.map((sub) => {
         const ended = Boolean(sub.endPeriodKey)
-        const finished = ended && sub.endPeriodKey < openPeriodKey
+        const isLastCharge = ended && sub.endPeriodKey === periodKey
         const category = categoryMeta(categories, sub.category)
         return (
           <div
@@ -116,11 +120,9 @@ function SubscriptionsCard({ card, subscriptions, categories, onStop, onResume }
                     {category.emoji} {category.label}
                   </span>
                 )}
-                {ended && (
+                {isLastCharge && (
                   <span className="inline-flex items-center rounded-full bg-rose/10 px-1.5 py-0.5 text-rose">
-                    {finished
-                      ? 'cancelada'
-                      : `última cobrança na fatura de ${invoiceMonthLabel(card, sub.endPeriodKey)}`}
+                    última cobrança na fatura de {invoiceMonthLabel(card, sub.endPeriodKey)}
                   </span>
                 )}
               </p>
@@ -142,12 +144,17 @@ function SubscriptionsCard({ card, subscriptions, categories, onStop, onResume }
   )
 }
 
-function CardInvoiceView({ card, transactions, categories, subscriptions, onDeleteItem }) {
-  const periods = useMemo(() => listInvoicePeriods(card, { pastCount: 6, futureCount: 12 }), [card])
-  const currentIndex = periods.findIndex((p) => !isPeriodClosed(p))
-  const [index, setIndex] = useState(currentIndex === -1 ? periods.length - 1 : currentIndex)
-
-  const period = periods[index]
+function CardInvoiceView({
+  card,
+  transactions,
+  categories,
+  subscriptions,
+  periods,
+  period,
+  index,
+  setIndex,
+  onDeleteItem,
+}) {
   const items = useMemo(
     () =>
       invoiceItems(transactions, card.id, period, subscriptions).sort((a, b) =>
@@ -265,6 +272,18 @@ function CardsScreen({
   const setSelectedId = isControlled ? onSelectCard : setInternalSelectedId
   const selectedCard = cards.find((c) => c.id === selectedId) ?? cards[0]
 
+  // Estado da fatura em navegação mora aqui (não dentro de CardInvoiceView)
+  // pra poder ser compartilhado com SubscriptionsCard — a lista de
+  // assinaturas precisa saber qual fatura está sendo vista pra filtrar quem
+  // ainda estava ativo naquele mês.
+  const periods = useMemo(
+    () => (selectedCard ? listInvoicePeriods(selectedCard, { pastCount: 6, futureCount: 12 }) : []),
+    [selectedCard],
+  )
+  const currentIndex = periods.findIndex((p) => !isPeriodClosed(p))
+  const [index, setIndex] = useState(currentIndex === -1 ? periods.length - 1 : currentIndex)
+  const period = periods[index]
+
   if (cards.length === 0) {
     return (
       <EmptyState
@@ -328,20 +347,25 @@ function CardsScreen({
         subscriptions={subscriptions}
       />
 
-      <SubscriptionsCard
-        card={selectedCard}
-        subscriptions={subscriptions}
-        categories={categories}
-        onStop={onStopSubscription}
-        onResume={onResumeSubscription}
-      />
-
       <CardInvoiceView
         card={selectedCard}
         transactions={transactions}
         categories={categories}
         subscriptions={subscriptions}
+        periods={periods}
+        period={period}
+        index={index}
+        setIndex={setIndex}
         onDeleteItem={onDeleteCardItem}
+      />
+
+      <SubscriptionsCard
+        card={selectedCard}
+        subscriptions={subscriptions}
+        categories={categories}
+        periodKey={period.periodKey}
+        onStop={onStopSubscription}
+        onResume={onResumeSubscription}
       />
     </div>
   )

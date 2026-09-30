@@ -192,7 +192,7 @@ export function cardTransactionsInPeriod(transactions, cardId, period) {
 // Uma assinatura vale de `startPeriodKey` até `endPeriodKey` (inclusive) —
 // mesma convenção do `recurringEndMonthKey` das contas fixas: cancelar no mês
 // atual mantém a cobrança desse mês e corta só as seguintes.
-function subscriptionActiveIn(subscription, periodKey) {
+export function subscriptionActiveIn(subscription, periodKey) {
   if (subscription.startPeriodKey && periodKey < subscription.startPeriodKey) return false
   if (subscription.endPeriodKey && periodKey > subscription.endPeriodKey) return false
   return true
