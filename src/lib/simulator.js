@@ -52,7 +52,7 @@ export function simulatePurchase(
   const lastCharge = chargeDates[chargeDates.length - 1]
   const days = Math.min(365, Math.max(30, daysBetween(today, lastCharge) + 5))
 
-  const baseline = computeProjection(accounts, transactions, days)
+  const baseline = computeProjection(accounts, transactions, bills, billPayments, days)
   const whatIf = baseline.map((point) => {
     const chargesSoFar = chargeDates.filter((d) => d <= point.date).length
     return chargesSoFar > 0

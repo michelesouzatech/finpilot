@@ -3,6 +3,10 @@ import { computeSaved } from './goals'
 import { buildOccurrencesForMonth } from './bills'
 import { currentPeriodKey, invoicePeriod, invoiceItems, invoiceTotal } from './invoices'
 
+function toMonthKey(iso) {
+  return iso.slice(0, 7)
+}
+
 // Data local (não UTC) — ver o comentário em constants.js/todayIso sobre por
 // que `toISOString()` sozinho causa bug de fuso horário perto da meia-noite.
 function toIsoDate(date) {
@@ -184,27 +188,67 @@ export function cardTotalsBreakdown(accounts, transactions, subscriptions = []) 
     .sort((a, b) => b.value - a.value)
 }
 
-// Projeta o saldo dos próximos `days` dias, repetindo mensalmente as
-// transações marcadas como recorrentes (mesmo dia do mês).
-export function computeProjection(accounts, transactions, days = 30) {
+// Ocorrências de contas (a pagar/receber) ainda em aberto que caem dentro da
+// janela de projeção, indexadas pela data de vencimento. É isso que faz a
+// projeção enxergar os meses à frente de verdade — contas cadastradas em
+// Lançamentos, não só transações marcadas manualmente como recorrentes.
+// Ocorrência já paga não entra: o pagamento já virou transação e já está no
+// saldo de partida, contá-la de novo aqui duplicaria o valor.
+function billDeltasByDueDate(bills, billPayments, today, days) {
+  const deltas = new Map()
+  const monthKeys = new Set()
+  for (let offset = 0; offset <= days; offset++) {
+    const date = new Date(today)
+    date.setDate(date.getDate() + offset)
+    monthKeys.add(toMonthKey(toIsoDate(date)))
+  }
+
+  const todayIsoStr = toIsoDate(today)
+  for (const monthKey of monthKeys) {
+    for (const occ of buildOccurrencesForMonth(bills ?? [], billPayments ?? [], monthKey, todayIsoStr)) {
+      if (occ.paid || occ.remaining == null || occ.remaining <= 0) continue
+      const sign = (occ.bill.type ?? 'saida') === 'entrada' ? 1 : -1
+      deltas.set(occ.dueDate, (deltas.get(occ.dueDate) ?? 0) + sign * occ.remaining)
+    }
+  }
+
+  return deltas
+}
+
+// Projeta o saldo, as entradas e as saídas previstas dos próximos `days`
+// dias: repete mensalmente as transações marcadas como recorrentes (mesmo
+// dia do mês) e soma as contas a pagar/receber já cadastradas que ainda vão
+// vencer nessa janela — assim a projeção se atualiza sozinha conforme contas
+// dos próximos meses são lançadas, em vez de ficar presa só ao que foi
+// marcado manualmente como recorrente.
+export function computeProjection(accounts, transactions, bills = [], billPayments = [], days = 30) {
   const startBalance = computeBalance(accounts, transactions)
   const recurring = transactions.filter((t) => t.recurring && t.date)
   const today = startOfToday()
+  const billDeltas = billDeltasByDueDate(bills, billPayments, today, days)
 
-  const points = [{ offset: 0, date: toIsoDate(today), balance: startBalance }]
+  const points = [{ offset: 0, date: toIsoDate(today), balance: startBalance, income: 0, expense: 0 }]
   let balance = startBalance
+  let income = 0
+  let expense = 0
 
   for (let offset = 1; offset <= days; offset++) {
     const date = new Date(today)
     date.setDate(date.getDate() + offset)
     const dayOfMonth = date.getDate()
+    const iso = toIsoDate(date)
 
-    const delta = recurring
+    const recurringDelta = recurring
       .filter((t) => new Date(`${t.date}T00:00:00`).getDate() === dayOfMonth)
       .reduce((sum, t) => sum + signedAmount(t), 0)
 
+    const delta = recurringDelta + (billDeltas.get(iso) ?? 0)
+
     balance += delta
-    points.push({ offset, date: toIsoDate(date), balance })
+    if (delta > 0) income += delta
+    else if (delta < 0) expense += -delta
+
+    points.push({ offset, date: iso, balance, income, expense })
   }
 
   return points

@@ -24,19 +24,14 @@ function ProjectionChart({ points }) {
   const svgRef = useRef(null)
   const [activeIndex, setActiveIndex] = useState(null)
 
-  const balances = points.map((p) => p.balance)
-  const min = Math.min(...balances)
-  const max = Math.max(...balances)
-  const range = max - min || 1
+  const max = Math.max(...points.map((p) => p.income), ...points.map((p) => p.expense)) || 1
 
   const toX = (i) => padding + (i / (points.length - 1)) * (width - padding * 2)
-  const toY = (balance) =>
-    height - padding - ((balance - min) / range) * (height - padding * 2)
+  const toY = (value) => height - padding - (value / max) * (height - padding * 2)
 
-  const path = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${toX(i)} ${toY(p.balance)}`).join(' ')
-  const zeroY = min <= 0 && max >= 0 ? toY(0) : null
+  const incomePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${toX(i)} ${toY(p.income)}`).join(' ')
+  const expensePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${toX(i)} ${toY(p.expense)}`).join(' ')
 
-  const first = points[0]
   const last = points[points.length - 1]
   const active = activeIndex !== null ? points[activeIndex] : null
 
@@ -71,11 +66,20 @@ function ProjectionChart({ points }) {
 
   return (
     <div className="flex flex-col gap-2">
+      <div className="flex items-center gap-3 text-xs text-gray">
+        <span className="flex items-center gap-1.5">
+          <span className="h-2 w-2 rounded-full bg-mint" /> Entradas previstas
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="h-2 w-2 rounded-full bg-rose" /> Saídas previstas
+        </span>
+      </div>
+
       <div className="relative">
         <svg
           ref={svgRef}
           viewBox={`0 0 ${width} ${height}`}
-          className="block w-full touch-none select-none text-coral"
+          className="block w-full touch-none select-none"
           preserveAspectRatio="none"
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
@@ -84,19 +88,26 @@ function ProjectionChart({ points }) {
           onPointerCancel={handlePointerUp}
           onPointerLeave={handlePointerLeave}
         >
-          {zeroY !== null && (
-            <line
-              x1={padding}
-              x2={width - padding}
-              y1={zeroY}
-              y2={zeroY}
-              stroke="currentColor"
-              strokeOpacity="0.15"
-              strokeDasharray="4 4"
-            />
-          )}
-          <path d={path} fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
-          <circle cx={toX(points.length - 1)} cy={toY(last.balance)} r="4" fill="currentColor" />
+          <path
+            d={incomePath}
+            fill="none"
+            stroke="currentColor"
+            className="text-mint"
+            strokeWidth="2.5"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
+          <path
+            d={expensePath}
+            fill="none"
+            stroke="currentColor"
+            className="text-rose"
+            strokeWidth="2.5"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
+          <circle cx={toX(points.length - 1)} cy={toY(last.income)} r="4" fill="currentColor" className="text-mint" />
+          <circle cx={toX(points.length - 1)} cy={toY(last.expense)} r="4" fill="currentColor" className="text-rose" />
 
           {active && (
             <g>
@@ -106,10 +117,27 @@ function ProjectionChart({ points }) {
                 y1={padding}
                 y2={height - padding}
                 stroke="currentColor"
-                strokeOpacity="0.3"
+                strokeOpacity="0.15"
                 strokeWidth="1"
               />
-              <circle cx={tooltipX} cy={toY(active.balance)} r="4.5" fill="white" stroke="currentColor" strokeWidth="2.5" />
+              <circle
+                cx={tooltipX}
+                cy={toY(active.income)}
+                r="4.5"
+                fill="white"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                className="text-mint"
+              />
+              <circle
+                cx={tooltipX}
+                cy={toY(active.expense)}
+                r="4.5"
+                fill="white"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                className="text-rose"
+              />
             </g>
           )}
         </svg>
@@ -124,7 +152,8 @@ function ProjectionChart({ points }) {
                 tooltipSide === 'right' ? '-translate-x-full' : ''
               }`}
             >
-              <div className="font-semibold">{formatMoney(active.balance)}</div>
+              <div className="font-semibold text-mint">{formatMoney(active.income)}</div>
+              <div className="font-semibold text-rose">{formatMoney(active.expense)}</div>
               <div className="text-[10px] text-white/70">
                 {activeIndex === 0 ? 'Hoje' : formatDate(active.date)}
               </div>
@@ -133,10 +162,13 @@ function ProjectionChart({ points }) {
         )}
       </div>
 
-      <div className="flex justify-between text-xs text-gray">
-        <span>Hoje · {formatMoney(first.balance)}</span>
-        <span>{formatDate(last.date)} · {formatMoney(last.balance)}</span>
+      <div className="flex justify-between text-xs">
+        <span className="font-medium text-mint">{formatMoney(last.income)} até {formatDate(last.date)}</span>
+        <span className="font-medium text-rose">{formatMoney(last.expense)} até {formatDate(last.date)}</span>
       </div>
+      <p className="text-[11px] text-gray">
+        Saldo projetado em {formatDate(last.date)}: <span className="font-medium text-ink">{formatMoney(last.balance)}</span>
+      </p>
     </div>
   )
 }
@@ -223,7 +255,10 @@ function Dashboard({
   onFocusBill,
 }) {
   const summary = useMemo(() => computeMonthSummary(accounts, transactions), [accounts, transactions])
-  const projection = useMemo(() => computeProjection(accounts, transactions, 30), [accounts, transactions])
+  const projection = useMemo(
+    () => computeProjection(accounts, transactions, bills, billPayments, 30),
+    [accounts, transactions, bills, billPayments],
+  )
   const available = useMemo(
     () => computeAvailableBalance(accounts, transactions, goals, pockets),
     [accounts, transactions, goals, pockets],
@@ -367,7 +402,9 @@ function Dashboard({
       <Card className="flex flex-col gap-3">
         <div>
           <h2 className="font-display text-lg font-semibold text-ink">Projeção 30 dias</h2>
-          <p className="text-xs text-gray">Baseada nos lançamentos marcados como recorrentes</p>
+          <p className="text-xs text-gray">
+            Baseada nos lançamentos recorrentes e nas contas já cadastradas pros próximos meses
+          </p>
         </div>
         <ProjectionChart points={projection} />
       </Card>
